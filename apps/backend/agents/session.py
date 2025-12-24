@@ -9,7 +9,7 @@ memory updates, recovery tracking, and Linear integration.
 import logging
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeSDKClient
+from core.copilot_client_subprocess import CopilotCLIClient
 from debug import debug, debug_detailed, debug_error, debug_section, debug_success
 from insight_extractor import extract_session_insights
 from linear_updater import (
@@ -311,17 +311,17 @@ async def post_session_processing(
 
 
 async def run_agent_session(
-    client: ClaudeSDKClient,
+    client: CopilotCLIClient,
     message: str,
     spec_dir: Path,
     verbose: bool = False,
     phase: LogPhase = LogPhase.CODING,
 ) -> tuple[str, str]:
     """
-    Run a single agent session using Claude Agent SDK.
+    Run a single agent session using GitHub Copilot CLI.
 
     Args:
-        client: Claude SDK client
+        client: Copilot CLI client
         message: The prompt to send
         spec_dir: Spec directory path
         verbose: Whether to show detailed output
@@ -342,7 +342,7 @@ async def run_agent_session(
         prompt_length=len(message),
         prompt_preview=message[:200] + "..." if len(message) > 200 else message,
     )
-    print("Sending prompt to Claude Agent SDK...\n")
+    print("Sending prompt to GitHub Copilot CLI...\n")
 
     # Get task logger for this spec
     task_logger = get_task_logger(spec_dir)
@@ -352,7 +352,7 @@ async def run_agent_session(
 
     try:
         # Send the query
-        debug("session", "Sending query to Claude SDK...")
+        debug("session", "Sending query to Copilot CLI...")
         await client.query(message)
         debug_success("session", "Query sent successfully")
 
