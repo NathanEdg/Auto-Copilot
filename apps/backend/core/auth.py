@@ -1,5 +1,5 @@
 """
-Authentication helpers for Auto Claude.
+Authentication helpers for Auto Copilot.
 
 Provides centralized authentication token resolution with fallback support
 for multiple environment variables, and SDK environment variable passthrough
@@ -12,50 +12,36 @@ import platform
 import subprocess
 
 # Priority order for auth token resolution
-# NOTE: We intentionally do NOT fall back to ANTHROPIC_API_KEY.
-# Auto Claude is designed to use Claude Code OAuth tokens only.
-# This prevents silent billing to user's API credits when OAuth fails.
+# NOTE: We use GitHub authentication for Copilot access
 AUTH_TOKEN_ENV_VARS = [
-    "CLAUDE_CODE_OAUTH_TOKEN",  # OAuth token from Claude Code CLI
-    "ANTHROPIC_AUTH_TOKEN",  # CCR/proxy token (for enterprise setups)
+    "GITHUB_TOKEN",  # GitHub Personal Access Token or gh CLI token
+    "GH_TOKEN",  # Alternative GitHub token env var
 ]
 
 # Environment variables to pass through to SDK subprocess
-# NOTE: ANTHROPIC_API_KEY is intentionally excluded to prevent silent API billing
 SDK_ENV_VARS = [
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_AUTH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
     "NO_PROXY",
     "DISABLE_TELEMETRY",
-    "DISABLE_COST_WARNINGS",
     "API_TIMEOUT_MS",
 ]
 
 
-def get_token_from_keychain() -> str | None:
+def get_token_from_gh_cli() -> str | None:
     """
-    Get authentication token from macOS Keychain.
+    Get authentication token from GitHub CLI.
 
-    Reads Claude Code credentials from macOS Keychain and extracts the OAuth token.
-    Only works on macOS (Darwin platform).
+    Attempts to retrieve GitHub token from gh CLI auth status.
+    Works on all platforms where gh CLI is installed.
 
     Returns:
-        Token string if found in Keychain, None otherwise
+        Token string if found, None otherwise
     """
-    # Only attempt on macOS
-    if platform.system() != "Darwin":
-        return None
-
     try:
-        # Query macOS Keychain for Claude Code credentials
+        # Query gh CLI for auth token
         result = subprocess.run(
-            [
-                "/usr/bin/security",
-                "find-generic-password",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-            ],
+            ["gh", "auth", "token"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -64,26 +50,19 @@ def get_token_from_keychain() -> str | None:
         if result.returncode != 0:
             return None
 
-        # Parse JSON response
-        credentials_json = result.stdout.strip()
-        if not credentials_json:
-            return None
-
-        data = json.loads(credentials_json)
-
-        # Extract OAuth token from nested structure
-        token = data.get("claudeAiOauth", {}).get("accessToken")
-
+        token = result.stdout.strip()
         if not token:
             return None
 
-        # Validate token format (Claude OAuth tokens start with sk-ant-oat01-)
-        if not token.startswith("sk-ant-oat01-"):
+        # Basic validation - GitHub tokens start with various prefixes
+        # (ghp_, gho_, ghu_, ghs_, ghr_, github_pat_)
+        valid_prefixes = ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_")
+        if not any(token.startswith(prefix) for prefix in valid_prefixes):
             return None
 
         return token
 
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, Exception):
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
         # Silently fail - this is a fallback mechanism
         return None
 
@@ -92,13 +71,14 @@ def get_auth_token() -> str | None:
     """
     Get authentication token from environment variables or macOS Keychain.
 
-    Checks multiple sources in priority order:
-    1. CLAUDE_CODE_OAUTH_TOKEN (env var)
-    2. ANTHROPIC_AUTH_TOKEN (CCR/proxy env var for enterprise setups)
-    3. macOS Keychain (if on Darwin platform)
+def get_auth_token() -> str | None:
+    """
+    Get authentication token from environment variables or gh CLI.
 
-    NOTE: ANTHROPIC_API_KEY is intentionally NOT supported to prevent
-    silent billing to user's API credits when OAuth is misconfigured.
+    Checks multiple sources in priority order:
+    1. GITHUB_TOKEN (env var)
+    2. GH_TOKEN (alternative env var)
+    3. gh CLI (via `gh auth token`)
 
     Returns:
         Token string if found, None otherwise
@@ -109,8 +89,8 @@ def get_auth_token() -> str | None:
         if token:
             return token
 
-    # Fallback to macOS Keychain
-    return get_token_from_keychain()
+    # Fallback to gh CLI
+    return get_token_from_gh_cli()
 
 
 def get_auth_token_source() -> str | None:
@@ -120,9 +100,9 @@ def get_auth_token_source() -> str | None:
         if os.environ.get(var):
             return var
 
-    # Check if token came from macOS Keychain
-    if get_token_from_keychain():
-        return "macOS Keychain"
+    # Check if token came from gh CLI
+    if get_token_from_gh_cli():
+        return "gh CLI"
 
     return None
 
@@ -137,24 +117,13 @@ def require_auth_token() -> str:
     token = get_auth_token()
     if not token:
         error_msg = (
-            "No OAuth token found.\n\n"
-            "Auto Claude requires Claude Code OAuth authentication.\n"
-            "Direct API keys (ANTHROPIC_API_KEY) are not supported.\n\n"
+            "No GitHub token found.\n\n"
+            "Auto Copilot requires GitHub authentication to use Copilot.\n\n"
+            "To authenticate:\n"
+            "  1. Run: gh auth login\n"
+            "  2. Or set GITHUB_TOKEN in your .env file\n"
+            "  3. Token will be detected automatically from gh CLI or env var"
         )
-        # Provide platform-specific guidance
-        if platform.system() == "Darwin":
-            error_msg += (
-                "To authenticate:\n"
-                "  1. Run: claude setup-token\n"
-                "  2. The token will be saved to macOS Keychain automatically\n\n"
-                "Or set CLAUDE_CODE_OAUTH_TOKEN in your .env file."
-            )
-        else:
-            error_msg += (
-                "To authenticate:\n"
-                "  1. Run: claude setup-token\n"
-                "  2. Set CLAUDE_CODE_OAUTH_TOKEN in your .env file"
-            )
         raise ValueError(error_msg)
     return token
 
@@ -163,8 +132,8 @@ def get_sdk_env_vars() -> dict[str, str]:
     """
     Get environment variables to pass to SDK.
 
-    Collects relevant env vars (ANTHROPIC_BASE_URL, etc.) that should
-    be passed through to the claude-agent-sdk subprocess.
+    Collects relevant env vars (GITHUB_TOKEN, etc.) that should
+    be passed through to the bridge server or SDK subprocess.
 
     Returns:
         Dict of env var name -> value for non-empty vars
@@ -177,16 +146,16 @@ def get_sdk_env_vars() -> dict[str, str]:
     return env
 
 
-def ensure_claude_code_oauth_token() -> None:
+def ensure_github_token() -> None:
     """
-    Ensure CLAUDE_CODE_OAUTH_TOKEN is set (for SDK compatibility).
+    Ensure GITHUB_TOKEN is set (for bridge compatibility).
 
     If not set but other auth tokens are available, copies the value
-    to CLAUDE_CODE_OAUTH_TOKEN so the underlying SDK can use it.
+    to GITHUB_TOKEN so the bridge server can use it.
     """
-    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+    if os.environ.get("GITHUB_TOKEN"):
         return
 
     token = get_auth_token()
     if token:
-        os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
+        os.environ["GITHUB_TOKEN"] = token

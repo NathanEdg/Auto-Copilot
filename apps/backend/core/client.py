@@ -1,8 +1,8 @@
 """
-Claude SDK Client Configuration
-===============================
+GitHub Copilot Client Configuration
+====================================
 
-Functions for creating and configuring the Claude Agent SDK client.
+Functions for creating and configuring the GitHub Copilot client via bridge server.
 """
 
 import json
@@ -16,8 +16,7 @@ from auto_claude_tools import (
 from auto_claude_tools import (
     get_allowed_tools as get_agent_allowed_tools,
 )
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from claude_agent_sdk.types import HookMatcher
+from core.copilot_client import CopilotBridgeClient
 from core.auth import get_sdk_env_vars, require_auth_token
 from linear_updater import is_linear_enabled
 from prompts_pkg.project_context import detect_project_capabilities, load_project_index
@@ -135,14 +134,14 @@ def create_client(
     model: str,
     agent_type: str = "coder",
     max_thinking_tokens: int | None = None,
-) -> ClaudeSDKClient:
+) -> CopilotBridgeClient:
     """
-    Create a Claude Agent SDK client with multi-layered security.
+    Create a GitHub Copilot client via bridge server with multi-layered security.
 
     Args:
         project_dir: Root directory for the project (working directory)
         spec_dir: Directory containing the spec (for settings file)
-        model: Claude model to use
+        model: Model to use (gpt-4o, gpt-4-turbo, etc.)
         agent_type: Type of agent - 'planner', 'coder', 'qa_reviewer', or 'qa_fixer'
                    This determines which custom auto-claude tools are available.
         max_thinking_tokens: Token budget for extended thinking (None = disabled)
@@ -152,7 +151,7 @@ def create_client(
                             - None: disabled (coding)
 
     Returns:
-        Configured ClaudeSDKClient
+        Configured CopilotBridgeClient
 
     Security layers (defense in depth):
     1. Sandbox - OS-level bash command isolation prevents filesystem escape
@@ -161,11 +160,11 @@ def create_client(
        (see security.py for ALLOWED_COMMANDS)
     4. Tool filtering - Each agent type only sees relevant tools (prevents misuse)
     """
-    oauth_token = require_auth_token()
-    # Ensure SDK can access it via its expected env var
-    os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    auth_token = require_auth_token()
+    # Ensure GitHub token is available
+    os.environ["GITHUB_TOKEN"] = auth_token
 
-    # Collect env vars to pass to SDK (ANTHROPIC_BASE_URL, etc.)
+    # Collect env vars to pass to bridge (if needed)
     sdk_env = get_sdk_env_vars()
 
     # Check if Linear integration is enabled
@@ -335,30 +334,22 @@ def create_client(
         if auto_claude_mcp_server:
             mcp_servers["auto-claude"] = auto_claude_mcp_server
 
-    return ClaudeSDKClient(
-        options=ClaudeAgentOptions(
-            model=model,
-            system_prompt=(
-                f"You are an expert full-stack developer building production-quality software. "
-                f"Your working directory is: {project_dir.resolve()}\n"
-                f"Your filesystem access is RESTRICTED to this directory only. "
-                f"Use relative paths (starting with ./) for all file operations. "
-                f"Never use absolute paths or try to access files outside your working directory.\n\n"
-                f"You follow existing code patterns, write clean maintainable code, and verify "
-                f"your work through thorough testing. You communicate progress through Git commits "
-                f"and build-progress.txt updates."
-            ),
-            allowed_tools=allowed_tools_list,
-            mcp_servers=mcp_servers,
-            hooks={
-                "PreToolUse": [
-                    HookMatcher(matcher="Bash", hooks=[bash_security_hook]),
-                ],
-            },
-            max_turns=1000,
-            cwd=str(project_dir.resolve()),
-            settings=str(settings_file.resolve()),
-            env=sdk_env,  # Pass ANTHROPIC_BASE_URL etc. to subprocess
-            max_thinking_tokens=max_thinking_tokens,  # Extended thinking budget
-        )
+    # Create system message
+    system_message = (
+        f"You are an expert full-stack developer building production-quality software. "
+        f"Your working directory is: {project_dir.resolve()}\n"
+        f"Your filesystem access is RESTRICTED to this directory only. "
+        f"Use relative paths (starting with ./) for all file operations. "
+        f"Never use absolute paths or try to access files outside your working directory.\n\n"
+        f"You follow existing code patterns, write clean maintainable code, and verify "
+        f"your work through thorough testing. You communicate progress through Git commits "
+        f"and build-progress.txt updates."
+    )
+
+    return CopilotBridgeClient(
+        model=model,
+        working_directory=str(project_dir.resolve()),
+        available_tools=allowed_tools_list,
+        mcp_servers=mcp_servers,
+        system_message=system_message,
     )
