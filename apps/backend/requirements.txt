@@ -1,6 +1,5 @@
 # Auto-Build Framework Dependencies
-# GitHub Copilot integration via bridge server (Node.js)
-requests>=2.31.0
+# GitHub Copilot CLI integration via subprocess
 python-dotenv>=1.0.0
 
 # TOML parsing fallback for Python < 3.11

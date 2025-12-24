@@ -16,7 +16,7 @@ from auto_claude_tools import (
 from auto_claude_tools import (
     get_allowed_tools as get_agent_allowed_tools,
 )
-from core.copilot_client import CopilotBridgeClient
+from core.copilot_client_subprocess import CopilotCLIClient
 from core.auth import get_sdk_env_vars, require_auth_token
 from linear_updater import is_linear_enabled
 from prompts_pkg.project_context import detect_project_capabilities, load_project_index
@@ -134,9 +134,9 @@ def create_client(
     model: str,
     agent_type: str = "coder",
     max_thinking_tokens: int | None = None,
-) -> CopilotBridgeClient:
+) -> CopilotCLIClient:
     """
-    Create a GitHub Copilot client via bridge server with multi-layered security.
+    Create a GitHub Copilot CLI client with multi-layered security.
 
     Args:
         project_dir: Root directory for the project (working directory)
@@ -151,7 +151,7 @@ def create_client(
                             - None: disabled (coding)
 
     Returns:
-        Configured CopilotBridgeClient
+        Configured CopilotCLIClient
 
     Security layers (defense in depth):
     1. Sandbox - OS-level bash command isolation prevents filesystem escape
@@ -346,7 +346,7 @@ def create_client(
         f"and build-progress.txt updates."
     )
 
-    return CopilotBridgeClient(
+    return CopilotCLIClient(
         model=model,
         working_directory=str(project_dir.resolve()),
         available_tools=allowed_tools_list,
